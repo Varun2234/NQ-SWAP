@@ -23,43 +23,6 @@ A production-grade DEX indexer that detects MEV (Maximal Extractable Value) sand
 
 ## System Architecture
 
-┌─────────────────────────────────────────────────────────────┐
-│ ETHEREUM MAINNET │
-│ (Alchemy + Infura RPC Nodes) │
-└──────────────────────┬──────────────────────────────────────┘
-│
-▼
-┌─────────────────────────────────────────────────────────────┐
-│ RPC MANAGER (Failover Logic) │
-│ ┌──────────────┐ ┌──────────────┐ │
-│ │ Alchemy │◄────►│ Infura │ │
-│ │ (Primary) │ │ (Backup) │ │
-│ └──────────────┘ └──────────────┘ │
-└──────────────────────┬──────────────────────────────────────┘
-│
-▼
-┌─────────────────────────────────────────────────────────────┐
-│ BLOCK PROCESSOR (Indexer) │
-│ 1. Fetch Block → 2. Get Transactions → 3. Save to DB │
-│ 4. Detect Sandwiches → 5. Calculate Profit │
-└──────────────────────┬──────────────────────────────────────┘
-│
-▼
-┌─────────────────────────────────────────────────────────────┐
-│ POSTGRESQL DATABASE │
-│ ┌─────────────┐ ┌─────────────────┐ ┌─────────────────┐ │
-│ │ blocks │ │ transactions │ │whale_transactions│ │
-│ │ │ │ (partitioned) │ │ │ │
-│ └─────────────┘ └─────────────────┘ └─────────────────┘ │
-└──────────────────────┬──────────────────────────────────────┘
-│
-▼
-┌─────────────────────────────────────────────────────────────┐
-│ REST API (Express.js) │
-│ GET /health → Health check │
-│ GET /whales?date= → Query sandwich attacks │
-└─────────────────────────────────────────────────────────────┘
-
 ### Root Configuration Files
 
 | File                 | Purpose                                      | Lines |
@@ -70,6 +33,62 @@ A production-grade DEX indexer that detects MEV (Maximal Extractable Value) sand
 | `.env`               | Environment variables (RPC keys, DB config)  | 12    |
 | `init.sql`           | **REMOVED** - Tables created via code        | -     |
 | `THOUGHTS.md`        | This documentation file                      | 400+  |
+
+┌─────────────────────────────────────────────────────────────────┐
+│ CLIENT LAYER │
+│ ┌─────────────┐ ┌─────────────┐ ┌────────────────┐ │
+│ │ Health API │ │ Whales API │ │ Status API │ │
+│ │ GET /health│ │ GET /whales │ │ (Future Ext.) │ │
+│ └──────┬──────┘ └──────┬──────┘ └────────────────┘ │
+└─────────┼─────────────────────┼─────────────────────────────────┘
+▼ ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ APPLICATION LAYER │
+│ ┌───────────────────────────────────────────────────────────┐ │
+│ │ Express.js REST API Server │ │
+│ │ • Port: 3000 | JSON handling | Error Middleware │ │
+│ └──────────────────────────────┬────────────────────────────┘ │
+│ ▼ │
+│ ┌───────────────────────────────────────────────────────────┐ │
+│ │ Block Processor Service │ │
+│ │ • Block Streaming | Decoding | Sandwich Detection │ │
+│ │ • Database Persistence | MEV Profit Calculation │ │
+│ └──────────────────────────────┬────────────────────────────┘ │
+└──────────────────────────────┬──┴──┬────────────────────────────┘
+│ │
+▼ ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ ETHEREUM LAYER │
+│ ┌───────────────────────────────────────────────────────────┐ │
+│ │ RPC Manager with Failover │ │
+│ │ [Primary: Alchemy] <───(Health Check)───> [Backup: Infura]│ │
+│ │ • Automatic Failover | Circuit Breaker | State Sync │ │
+│ └───────────────────────────────────────────────────────────┘ │
+└──────────────────────────────┬──────────────────────────────────┘
+│
+▼
+┌─────────────────────────────────────────────────────────────────┐
+│ DATA LAYER │
+│ ┌──────────────────┐ ┌──────────────────┐ ┌────────────────┐ │
+│ │ TABLE: blocks │ │TABLE: transacts │ │TABLE: whale_txs│ │
+│ │ • block_number │ │ • tx_hash (PK) │ │ • victim_hash │ │
+│ │ • block_hash │ │ • from / to │ │ • mev_bot │ │
+│ │ • timestamp │ │ • value / gas │ │ • profit_usd │ │
+│ │ • is_finalized │ │ • (Partitioned) │ │ • swap_amount │ │
+│ └──────────────────┘ └──────────────────┘ └────────────────┘ │
+└──────────────────────────────┬──────────────────────────────────┘
+│
+▼
+┌─────────────────────────────────────────────────────────────────┐
+│ INFRASTRUCTURE LAYER │
+│ ┌──────────────────────────────┐ ┌──────────────────────────┐ │
+│ │ Container: nqswap_postgres │ │ Container: nqswap_indexer│ │
+│ │ • Image: postgres:15-alpine │ │ • Image: Node.js 20 │ │
+│ │ • Internal Port: 5432 │ │ • Internal Port: 3000 │ │
+│ └──────────────────────────────┘ └──────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+
+---
 
 ┌─────────────────────────────────────────────────────────────────┐
 │ CLIENT LAYER │
