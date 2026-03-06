@@ -34,47 +34,6 @@ A production-grade DEX indexer that detects MEV (Maximal Extractable Value) sand
 | `init.sql`           | **REMOVED** - Tables created via code        | -     |
 | `THOUGHTS.md`        | This documentation file                      | 400+  |
 
-graph TD
-%% Client Layer
-subgraph Client_Layer [Client Layer]
-API1[Health API: GET /health]
-API2[Whales API: GET /whales]
-API3[Status API: Future Ext.]
-end
-
-    %% Application Layer
-    subgraph Application_Layer [Application Layer]
-        Express[Express.js REST API Server]
-        BP[Block Processor Service]
-        Express --- BP
-        BP --> |Detects| MEV[Sandwich Detection & Profit Calc]
-    end
-
-    %% Ethereum Layer
-    subgraph Ethereum_Layer [Ethereum Layer]
-        RPC[RPC Manager with Failover]
-        Alchemy[Primary: Alchemy]
-        Infura[Backup: Infura]
-        RPC --- Alchemy
-        RPC --- Infura
-    end
-
-    %% Data Layer
-    subgraph Data_Layer [Data Layer]
-        DB[(PostgreSQL Database)]
-        T1[Table: Blocks]
-        T2[Table: Transactions - Partitioned]
-        T3[Table: Whale Transactions]
-        DB --- T1
-        DB --- T2
-        DB --- T3
-    end
-
-    %% Connections
-    Client_Layer ==> Express
-    Application_Layer ==> DB
-    BP <==> RPC
-
 ## Component-by-Component Breakdown
 
 ### 1. Configuration Management (src/config/index.js)
