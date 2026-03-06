@@ -50,7 +50,7 @@ A production-grade DEX indexer that detects MEV (Maximal Extractable Value) sand
 │ └──────────────────────────────┬────────────────────────────┘ │
 │ ▼ │
 │ ┌───────────────────────────────────────────────────────────┐ │
-│ │ Block Processor Service │ │
+│ │ Block Processor Service │ │  
 │ │ • Block Streaming | Decoding | Sandwich Detection │ │
 │ │ • Database Persistence | MEV Profit Calculation │ │
 │ └──────────────────────────────┬────────────────────────────┘ │
@@ -69,169 +69,32 @@ A production-grade DEX indexer that detects MEV (Maximal Extractable Value) sand
 ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │ DATA LAYER │
-│ ┌──────────────────┐ ┌──────────────────┐ ┌────────────────┐ │
-│ │ TABLE: blocks │ │TABLE: transacts │ │TABLE: whale_txs│ │
-│ │ • block_number │ │ • tx_hash (PK) │ │ • victim_hash │ │
-│ │ • block_hash │ │ • from / to │ │ • mev_bot │ │
-│ │ • timestamp │ │ • value / gas │ │ • profit_usd │ │
-│ │ • is_finalized │ │ • (Partitioned) │ │ • swap_amount │ │
-│ └──────────────────┘ └──────────────────┘ └────────────────┘ │
+│ ┌────────────────────┐ ┌───────────────────┐ ┌───────────────┐ │
+│ │ TABLE: blocks │ │TABLE: transactions│ │TABLE: whale_tx│ │
+│ │ • block_num (PK) │ │ • id (UUID) │ │ • id (PK) │ │
+│ │ • block_hash │ │ • block_num │ │ • block_num │ │
+│ │ • parent_hash │ │ • tx_hash │ │ • tx_hash │ │
+│ │ • timestamp │ │ • from / to │ │ • victim_hash │ │
+│ │ • is_finalized │ │ • value / gas │ │ • mev_bot_add │ │
+│ │ │ │ • input_data │ │ • swap_amount │ │
+│ │ (Metadata/Finality)│ │ • (Partitioned) │ │ • mev_profit │ │
+│ └────────────────────┘ └───────────────────┘ └───────────────┘ │
 └──────────────────────────────┬──────────────────────────────────┘
 │
 ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │ INFRASTRUCTURE LAYER │
-│ ┌──────────────────────────────┐ ┌──────────────────────────┐ │
-│ │ Container: nqswap_postgres │ │ Container: nqswap_indexer│ │
-│ │ • Image: postgres:15-alpine │ │ • Image: Node.js 20 │ │
-│ │ • Internal Port: 5432 │ │ • Internal Port: 3000 │ │
-│ └──────────────────────────────┘ └──────────────────────────┘ │
+│ ┌─────────────────────────────┐ ┌──────────────────────────┐ │
+│ │ Container: nq_postgres │ │ Container: nq_indexer │ │
+│ │ • Port: 5432 │ │ • Port: 3000 │ │
+│ │ • Image: postgres:15-alp │ │ • Image: Node.js 20-alp │ │
+│ │ • Volume: postgres_data │ │ • Volumes: src, logs │ │
+│ │ • Healthcheck: pg_isready │ │ • Cmd: npm run dev │ │
+│ └─────────────────────────────┴───┴──────────────────────────┘ │
+│ ▲ ▲ │
+│ └───── Docker Network ──┘ │
+│ (postgres:5432 ↔ indexer:3000) │
 └─────────────────────────────────────────────────────────────────┘
-
----
-
-┌─────────────────────────────────────────────────────────────────┐
-│ CLIENT LAYER │
-│ ┌─────────────┐ ┌─────────────┐ ┌─────────────────────────┐ │
-│ │ Health API │ │ Whales API │ │ Block/Tx Status API │ │
-│ │ GET /health│ │GET /whales │ │ (Future Extension) │ │
-│ │ │ │?date=YYYY-MM│ │ │ │
-│ └──────┬──────┘ └──────┬──────┘ └─────────────────────────┘ │
-└─────────┼────────────────┼──────────────────────────────────────┘
-│ │
-▼ ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ APPLICATION LAYER │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ Express.js REST API Server │ │
-│ │ - Port: 3000 │ │
-│ │ - JSON request/response handling │ │
-│ │ - Error handling middleware │ │
-│ └─────────────────────────────────────────────────────────┘ │
-│ │ │
-│ ▼ │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ Block Processor Service │ │
-│ │ - Continuous block streaming from Ethereum │ │
-│ │ - Transaction extraction and decoding │ │
-│ │ - Sandwich pattern detection │ │
-│ │ - Database persistence │ │
-│ └─────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-│ │ │
-▼ ▼ ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ ETHEREUM LAYER │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ RPC Manager with Failover │ │
-│ │ ┌─────────────────┐ ┌─────────────────┐ │ │
-│ │ │ Primary: │───▶│ Alchemy │ │ │
-│ │ │ Alchemy │ │ eth-mainnet │ │ │
-│ │ │ (Primary RPC) │ │ │ │ │
-│ │ └─────────────────┘ └─────────────────┘ │ │
-│ │ │ │ │ │
-│ │ │ Failover on error │ │ │
-│ │ ▼ │ │ │
-│ │ ┌─────────────────┐ │ │ │
-│ │ │ Backup: │◀───────────────┘ │ │
-│ │ │ Infura │ (via MetaMask │ │
-│ │ │ (Backup RPC) │ Developer) │ │
-│ │ └─────────────────┘ │ │
-│ │ │ │
-│ │ Features: │ │
-│ │ - Automatic failover on connection failure │ │
-│ │ - Health checks before each request │ │
-│ │ - Maintains block position during switch │ │
-│ │ - Circuit breaker pattern │ │
-│ └─────────────────────────────────────────────────────────┘ │
-│ │ │
-│ ▼ │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ Sandwich Detection Engine │ │
-│ │ - Pattern recognition: Front-run → Victim → Back-run │ │
-│ │ - Whale threshold: $100,000 USD minimum │ │
-│ │ - DEX router identification (Uniswap V2/V3, SushiSwap) │ │
-│ │ - MEV bot address correlation │ │
-│ │ - Profit calculation (gas costs vs price impact) │ │
-│ └─────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-│
-▼
-┌─────────────────────────────────────────────────────────────────┐
-│ DATA LAYER │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ PostgreSQL Database │ │
-│ │ ┌─────────────────────────────────────────────────┐ │ │
-│ │ │ Table: blocks │ │ │
-│ │ │ - block_number (BIGINT, PRIMARY KEY) │ │ │
-│ │ │ - block_hash (VARCHAR) │ │ │
-│ │ │ - parent_hash (VARCHAR) │ │ │
-│ │ │ - timestamp (TIMESTAMPTZ) │ │ │
-│ │ │ - is_finalized (BOOLEAN) │ │ │
-│ │ │ Purpose: Track block metadata and finalization │ │ │
-│ │ └─────────────────────────────────────────────────┘ │ │
-│ │ │ │
-│ │ ┌─────────────────────────────────────────────────┐ │ │
-│ │ │ Table: transactions (PARTITIONED BY DAY) │ │ │
-│ │ │ - id (UUID) │ │ │
-│ │ │ - block_number (BIGINT) │ │ │
-│ │ │ - tx_hash (VARCHAR) │ │ │
-│ │ │ - from_address (VARCHAR) │ │ │
-│ │ │ - to_address (VARCHAR) │ │ │
-│ │ │ - value (NUMERIC) │ │ │
-│ │ │ - gas_price (NUMERIC) │ │ │
-│ │ │ - input_data (TEXT) │ │ │
-│ │ │ - timestamp (TIMESTAMPTZ) │ │ │
-│ │ │ Purpose: Store all blockchain transactions │ │ │
-│ │ │ Partitioning: Daily partitions for performance │ │ │
-│ │ └─────────────────────────────────────────────────┘ │ │
-│ │ │ │
-│ │ ┌─────────────────────────────────────────────────┐ │ │
-│ │ │ Table: whale_transactions │ │ │
-│ │ │ - id (UUID, PRIMARY KEY) │ │ │
-│ │ │ - block_number (BIGINT) │ │ │
-│ │ │ - tx_hash (VARCHAR, UNIQUE) │ │ │
-│ │ │ - victim_tx_hash (VARCHAR) │ │ │
-│ │ │ - mev_bot_address (VARCHAR) │ │ │
-│ │ │ - front_run_tx_hash (VARCHAR) │ │ │
-│ │ │ - back_run_tx_hash (VARCHAR) │ │ │
-│ │ │ - swap_amount_usd (NUMERIC) │ │ │
-│ │ │ - mev_profit_usd (NUMERIC) │ │ │
-│ │ │ - timestamp (TIMESTAMPTZ) │ │ │
-│ │ │ Purpose: Store detected MEV sandwich attacks │ │ │
-│ │ └─────────────────────────────────────────────────┘ │ │
-│ └─────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-│
-▼
-┌─────────────────────────────────────────────────────────────────┐
-│ INFRASTRUCTURE LAYER │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ Docker Containerization │ │
-│ │ ┌─────────────────┐ ┌─────────────────────────┐ │ │
-│ │ │ nqswap_postgres│ │ nqswap_indexer │ │ │
-│ │ │ Port: 5432 │ │ Port: 3000 │ │ │
-│ │ │ Image: │ │ Image: Node.js 20 │ │ │
-│ │ │ postgres:15 │ │ Alpine │ │ │
-│ │ │ -alpine │ │ │ │ │
-│ │ │ │ │ Volumes: │ │ │
-│ │ │ Volumes: │ │ - src (live reload) │ │ │
-│ │ │ - postgres_data│ │ - logs (persistence) │ │ │
-│ │ │ Healthcheck: │ │ │ │ │
-│ │ │ pg_isready │ │ Command: npm run dev │ │ │
-│ │ └─────────────────┘ └─────────────────────────┘ │ │
-│ │ │ │ │
-│ │ ▼ │ │
-│ │ ┌─────────────────┐ │ │
-│ │ │ Docker Network │ │ │
-│ │ │ Internal DNS: │ │ │
-│ │ │ postgres:5432 │ │ │
-│ │ │ indexer:3000 │ │ │
-│ │ └─────────────────┘ │ │
-│ └─────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-
----
 
 ## Component-by-Component Breakdown
 
