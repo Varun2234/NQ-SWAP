@@ -34,67 +34,46 @@ A production-grade DEX indexer that detects MEV (Maximal Extractable Value) sand
 | `init.sql`           | **REMOVED** - Tables created via code        | -     |
 | `THOUGHTS.md`        | This documentation file                      | 400+  |
 
-┌─────────────────────────────────────────────────────────────────┐
-│ CLIENT LAYER │
-│ ┌─────────────┐ ┌─────────────┐ ┌────────────────┐ │
-│ │ Health API │ │ Whales API │ │ Status API │ │
-│ │ GET /health│ │ GET /whales │ │ (Future Ext.) │ │
-│ └──────┬──────┘ └──────┬──────┘ └────────────────┘ │
-└─────────┼─────────────────────┼─────────────────────────────────┘
-▼ ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ APPLICATION LAYER │
-│ ┌───────────────────────────────────────────────────────────┐ │
-│ │ Express.js REST API Server │ │
-│ │ • Port: 3000 | JSON handling | Error Middleware │ │
-│ └──────────────────────────────┬────────────────────────────┘ │
-│ ▼ │
-│ ┌───────────────────────────────────────────────────────────┐ │
-│ │ Block Processor Service │ │  
-│ │ • Block Streaming | Decoding | Sandwich Detection │ │
-│ │ • Database Persistence | MEV Profit Calculation │ │
-│ └──────────────────────────────┬────────────────────────────┘ │
-└──────────────────────────────┬──┴──┬────────────────────────────┘
-│ │
-▼ ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ ETHEREUM LAYER │
-│ ┌───────────────────────────────────────────────────────────┐ │
-│ │ RPC Manager with Failover │ │
-│ │ [Primary: Alchemy] <───(Health Check)───> [Backup: Infura]│ │
-│ │ • Automatic Failover | Circuit Breaker | State Sync │ │
-│ └───────────────────────────────────────────────────────────┘ │
-└──────────────────────────────┬──────────────────────────────────┘
-│
-▼
-┌─────────────────────────────────────────────────────────────────┐
-│ DATA LAYER │
-│ ┌────────────────────┐ ┌───────────────────┐ ┌───────────────┐ │
-│ │ TABLE: blocks │ │TABLE: transactions│ │TABLE: whale_tx│ │
-│ │ • block_num (PK) │ │ • id (UUID) │ │ • id (PK) │ │
-│ │ • block_hash │ │ • block_num │ │ • block_num │ │
-│ │ • parent_hash │ │ • tx_hash │ │ • tx_hash │ │
-│ │ • timestamp │ │ • from / to │ │ • victim_hash │ │
-│ │ • is_finalized │ │ • value / gas │ │ • mev_bot_add │ │
-│ │ │ │ • input_data │ │ • swap_amount │ │
-│ │ (Metadata/Finality)│ │ • (Partitioned) │ │ • mev_profit │ │
-│ └────────────────────┘ └───────────────────┘ └───────────────┘ │
-└──────────────────────────────┬──────────────────────────────────┘
-│
-▼
-┌─────────────────────────────────────────────────────────────────┐
-│ INFRASTRUCTURE LAYER │
-│ ┌─────────────────────────────┐ ┌──────────────────────────┐ │
-│ │ Container: nq_postgres │ │ Container: nq_indexer │ │
-│ │ • Port: 5432 │ │ • Port: 3000 │ │
-│ │ • Image: postgres:15-alp │ │ • Image: Node.js 20-alp │ │
-│ │ • Volume: postgres_data │ │ • Volumes: src, logs │ │
-│ │ • Healthcheck: pg_isready │ │ • Cmd: npm run dev │ │
-│ └─────────────────────────────┴───┴──────────────────────────┘ │
-│ ▲ ▲ │
-│ └───── Docker Network ──┘ │
-│ (postgres:5432 ↔ indexer:3000) │
-└─────────────────────────────────────────────────────────────────┘
+graph TD
+%% Client Layer
+subgraph Client_Layer [Client Layer]
+API1[Health API: GET /health]
+API2[Whales API: GET /whales]
+API3[Status API: Future Ext.]
+end
+
+    %% Application Layer
+    subgraph Application_Layer [Application Layer]
+        Express[Express.js REST API Server]
+        BP[Block Processor Service]
+        Express --- BP
+        BP --> |Detects| MEV[Sandwich Detection & Profit Calc]
+    end
+
+    %% Ethereum Layer
+    subgraph Ethereum_Layer [Ethereum Layer]
+        RPC[RPC Manager with Failover]
+        Alchemy[Primary: Alchemy]
+        Infura[Backup: Infura]
+        RPC --- Alchemy
+        RPC --- Infura
+    end
+
+    %% Data Layer
+    subgraph Data_Layer [Data Layer]
+        DB[(PostgreSQL Database)]
+        T1[Table: Blocks]
+        T2[Table: Transactions - Partitioned]
+        T3[Table: Whale Transactions]
+        DB --- T1
+        DB --- T2
+        DB --- T3
+    end
+
+    %% Connections
+    Client_Layer ==> Express
+    Application_Layer ==> DB
+    BP <==> RPC
 
 ## Component-by-Component Breakdown
 
